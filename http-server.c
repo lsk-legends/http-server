@@ -10,46 +10,139 @@
 #include <stdio.h>
 #include "openssl/ssl.h"
 #include "openssl/err.h"
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 
 void* handle_http_request(void* sockaddr)
 {
 	int sock = *(int*)sockaddr;
 	free(sockaddr);
-	char response[1024]="HTTP/1.0 301 Moved Permanently\r\nLocation: https://10.0.0.1";
-	char buf[1024]={0};
+	const char* response200="HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\n";
+	const char* response206="HTTP/1.1 206 Partial Content\r\nConnection: Keep-Alive\r\n";
+	const char* response404="HTTP/1.1 404 NOT FOUND\r\n\r\n";
+	char buf[1024] = {0};
+	errno = 0;
 	int bytes = read(sock,buf,sizeof(buf));
 	if(bytes < 0){
 		perror("http read failed!");
 		exit(1);
-	}else{
-		//search for url
-		int i=0,j=0;
-		while(buf[i++]!=' ');
-		while(response[j]!='\0'){
-			j++;
-		}
-		while (buf[i]!=' ')
-		{
-			response[j++]=buf[i++];
-		}
-		response[j++]='\r';
-		response[j++]='\n';
-		response[j++]='\r';
-		response[j++]='\n';
-
-		if(send(sock,response,strlen(response),0)<0)
-			printf("send %s at %d error!\n",response,sock);
-		//else
-			//printf("send %s at %d already!\n",response,sock);
 	}
+		//printf("%s\n",buf);
+		char path[100];
+		int i=0;
+		//analysis path of buf
+		while(buf[i++]!=' ');
+		if(buf[i]=='h'){
+			int cnt=3;
+			while (cnt>0)
+			{
+				if(buf[i++]=='/')
+					cnt--;
+			}
+		}else{
+			if(buf[i]=='/')
+				i++;
+		}
+		//copy path
+		int j=0;
+		while(buf[i]!=' '){
+			path[j++]=buf[i++];
+		}
+		path[j]='\0';
+		//search for range
+		while(buf[i]!='R' && buf[i]!='\0'){
+			i++;
+		}
+		//test path
+		FILE* fp=fopen(path,"r");
+		if(fp==NULL){
+			send(sock,response404,strlen(response404),0);
+		}else
+		{	
+			int begin=0,end=-1,range = 0;
+			if(buf[i++]=='R' && buf[i++]=='a' && buf[i++]=='n' && buf[i++]=='g' && buf[i++]=='e'){
+				range = 1;
+				while(buf[i++]!='=');
+				while (buf[i]!='-')
+				{
+					begin=begin*10+buf[i++]-'0';
+				}
+				printf("begin = %d\n",begin);
+
+				i++;
+				while (buf[i]<='9' && buf[i]>='0')
+				{
+					if(end<0)
+						end=0;
+					end = end * 10 + buf[i++]-'0';
+				}
+				printf("end =%d\n",end);
+			}
+			struct stat sbuf;
+			stat(path, &sbuf);
+			long size = 0;
+			if(end>0){
+				size = end - begin + 1;
+			}else{
+				size = sbuf.st_size - begin;
+			}
+			if(range){
+				char buf206[200]={0};
+				sprintf(buf206,"%sContent-length: %ld\r\n\r\n",response206,size);
+				send(sock, buf206, strlen(buf206),0);
+				// send(sock, response206, strlen(response206),0);
+			}else{
+				char buf200[200]={0};
+				sprintf(buf200,"%sContent-length: %ld\r\n\r\n",response200,size);
+				send(sock, buf200, strlen(buf200),0);
+				// send(sock, response200, strlen(response200),0);
+			}
+			fseek(fp,begin,SEEK_SET);
+			char *srcp = (char *)malloc(size+100);
+			size = fread(srcp,1,size,fp);
+			printf("[DEBUG] send %ld of bytes\n",size);
+			send(sock,srcp,size,0);
+			free(srcp);
+			fclose(fp);
+		}
+	// return 301
+	// char response[1024]="HTTP/1.1 301 Moved Permanently\r\nLocation: https://10.0.0.1";
+	// char buf[1024]={0};
+	// int bytes = read(sock,buf,sizeof(buf));
+	// if(bytes < 0){
+	// 	perror("http read failed!");
+	// 	exit(1);
+	// }else{
+	// 	//search for url
+	// 	int i=0,j=0;
+	// 	while(buf[i++]!=' ');
+	// 	while(response[j]!='\0'){
+	// 		j++;
+	// 	}
+	// 	while (buf[i]!=' ')
+	// 	{
+	// 		response[j++]=buf[i++];
+	// 	}
+	// 	response[j++]='\r';
+	// 	response[j++]='\n';
+	// 	response[j++]='\r';
+	// 	response[j++]='\n';
+
+	// 	if(send(sock,response,strlen(response),0)<0)
+	// 		printf("send %s at %d error!\n",response,sock);
+	// 	//else
+	// 		//printf("send %s at %d already!\n",response,sock);
+	// }
+	printf("[DEBUG] close sock here\n");
 	close(sock);
 	return NULL;
 }
 
 void* handle_https_request(void* ssladdr){
-    const char* response200="HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
-	const char* response206="HTTP/1.0 206 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
-	const char* response404="HTTP/1.0 404 NOT FOUND\r\n\r\n";
+	const char* response200="HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\n";
+	const char* response206="HTTP/1.1 206 Partial Content\r\nConnection: Keep-Alive\r\n";
+	const char* response404="HTTP/1.1 404 NOT FOUND\r\n\r\n";
 	SSL* ssl=(SSL*)ssladdr;
     if (SSL_accept(ssl) == -1){
 		perror("SSL_accept failed");
@@ -84,14 +177,11 @@ void* handle_https_request(void* ssladdr){
 			path[j++]=buf[i++];
 		}
 		path[j]='\0';
-		//printf("%s\n",path);
-
 		//search for range
 		while(buf[i]!='R' && buf[i]!='\0'){
 			i++;
 		}
-		//printf("after search 'R'");
-		
+
 		//test path
 		FILE* fp=fopen(path,"r");
 		if(fp==NULL){
@@ -121,35 +211,30 @@ void* handle_https_request(void* ssladdr){
 				SSL_write(ssl, response206, strlen(response206));
 			else
 				SSL_write(ssl, response200, strlen(response200));
-
-			int num;
-			buf[2]='\r';
-			buf[3]='\n';
-			fseek(fp,begin,SEEK_SET);
-			if(end > 0 )
-				end = end - begin + 1;
-				//end = end - begin;
-			while((num = fread(&buf[4],1,255,fp)) > 0 && end != 0){
-				//规范分块传输格式
-				int i;
-				if(end>0){
-					if(end<num){
-						num = end;
-						end = 0;
-					}else
-						end -=num;
-				}
-				i=num/16;
-				buf[0] = i>9? i + 'A' - 10 : i + '0';
-				i=num%16;
-				buf[1] = i>9? i + 'A' - 10 : i + '0';
-				buf[num+4]='\r';
-				buf[num+5]='\n';
-				//printf("send one pakage size of %x\n",num);
-				SSL_write(ssl,buf,num+6);
+			struct stat sbuf;
+			stat(path, &sbuf);
+			long size = 0;
+			if(end>0){
+				size = end - begin;
+			}else{
+				size = sbuf.st_size - begin;
 			}
+			if(range){
+				char buf206[200]={0};
+				sprintf(buf206,"%sContent-length: %ld\r\n\r\n",response206,size);
+				SSL_write(ssl,buf206,strlen(buf206));
+			}else{
+				char buf200[200]={0};
+				sprintf(buf200,"%sContent-length: %ld\r\n\r\n",response200,size);
+				SSL_write(ssl, buf200, strlen(buf200));
+			}
+			fseek(fp,begin,SEEK_SET);
+			char *srcp = (char *)malloc(size+100);
+			size = fread(srcp,1,size,fp);
+			printf("[DEBUG] send %ld of bytes\n",size);
+			SSL_write(ssl,srcp,size);
+			free(srcp);
 			fclose(fp);
-			SSL_write(ssl,"0\r\n",3);
 		}
     }
     int sock = SSL_get_fd(ssl);
@@ -184,13 +269,17 @@ void* http_thread(){
 	}
 	listen(sock, 10);
 
-    	while (1) {
+    while (1) {
 		struct sockaddr_in caddr;
 		socklen_t len;
+		printf("[DEBUG] before accept\n");
 		int csock = accept(sock, (struct sockaddr*)&caddr, &len);//blocked when no request
 		if (csock < 0) {
+			printf("[DEBUG] no more accept!\n");
 			perror("Accept failed");
 			exit(1);
+		}else{
+			printf("[DEBUG] accept csock %d, sock %d\n", csock, sock);
 		}
 		//handle_http_request
 		int* http_sock=(int *)malloc(sizeof(int));
@@ -198,16 +287,13 @@ void* http_thread(){
 		pthread_t handle;
 		pthread_create(&handle,NULL,handle_http_request,(void *)http_sock);
 	}
-
+	printf("[DEBUG] close sock %d\n", sock);
 	close(sock);
 
 	return NULL;
 }
 
-int main()
-{
-    pthread_t http;
-    pthread_create(&http,NULL,http_thread,NULL);
+void* https_thread(){
 	// init SSL Library
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
@@ -261,13 +347,22 @@ int main()
 		}
 		SSL *ssl = SSL_new(ctx);
 		SSL_set_fd(ssl, csock);
-		//printf("csock = %d\n",csock);
 		pthread_t request;
 		pthread_create(&request,NULL,handle_https_request,(void*)ssl);
 	}
 
 	close(sock);
 	SSL_CTX_free(ctx);
+}
+
+int main()
+{
+    pthread_t http,https;
+	void *http_result, *https_result;
+    pthread_create(&http,NULL,http_thread,NULL);
+	pthread_create(&https,NULL,https_thread,NULL);
+	pthread_join(http,&http_result);
+	pthread_join(https,&https_result);
 
 	return 0;
 }
