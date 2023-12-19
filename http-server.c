@@ -20,14 +20,15 @@ void* handle_http_request(void* sockaddr)
 	free(sockaddr);
 	const char* response200="HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\n";
 	const char* response206="HTTP/1.1 206 Partial Content\r\nConnection: Keep-Alive\r\n";
+	char response[1024]="HTTP/1.1 301 Moved Permanently\r\nLocation: https://10.0.0.1";
 	const char* response404="HTTP/1.1 404 NOT FOUND\r\n\r\n";
 	char buf[1024] = {0};
-	errno = 0;
 	int bytes = read(sock,buf,sizeof(buf));
 	if(bytes < 0){
 		perror("http read failed!");
 		exit(1);
 	}
+	if(strstr(buf,".mp4")!=NULL){
 		//printf("%s\n",buf);
 		char path[100];
 		int i=0;
@@ -68,7 +69,7 @@ void* handle_http_request(void* sockaddr)
 				{
 					begin=begin*10+buf[i++]-'0';
 				}
-				printf("begin = %d\n",begin);
+				// printf("begin = %d\n",begin);
 
 				i++;
 				while (buf[i]<='9' && buf[i]>='0')
@@ -77,7 +78,7 @@ void* handle_http_request(void* sockaddr)
 						end=0;
 					end = end * 10 + buf[i++]-'0';
 				}
-				printf("end =%d\n",end);
+				// printf("end =%d\n",end);
 			}
 			struct stat sbuf;
 			stat(path, &sbuf);
@@ -101,40 +102,33 @@ void* handle_http_request(void* sockaddr)
 			fseek(fp,begin,SEEK_SET);
 			char *srcp = (char *)malloc(size+100);
 			size = fread(srcp,1,size,fp);
-			printf("[DEBUG] send %ld of bytes\n",size);
+			// printf("[DEBUG] send %ld of bytes\n",size);
 			send(sock,srcp,size,0);
 			free(srcp);
 			fclose(fp);
 		}
-	// return 301
-	// char response[1024]="HTTP/1.1 301 Moved Permanently\r\nLocation: https://10.0.0.1";
-	// char buf[1024]={0};
-	// int bytes = read(sock,buf,sizeof(buf));
-	// if(bytes < 0){
-	// 	perror("http read failed!");
-	// 	exit(1);
-	// }else{
-	// 	//search for url
-	// 	int i=0,j=0;
-	// 	while(buf[i++]!=' ');
-	// 	while(response[j]!='\0'){
-	// 		j++;
-	// 	}
-	// 	while (buf[i]!=' ')
-	// 	{
-	// 		response[j++]=buf[i++];
-	// 	}
-	// 	response[j++]='\r';
-	// 	response[j++]='\n';
-	// 	response[j++]='\r';
-	// 	response[j++]='\n';
+	}else{
+		//search for url
+		int i=0,j=0;
+		while(buf[i++]!=' ');
+		while(response[j]!='\0'){
+			j++;
+		}
+		while (buf[i]!=' ')
+		{
+			response[j++]=buf[i++];
+		}
+		response[j++]='\r';
+		response[j++]='\n';
+		response[j++]='\r';
+		response[j++]='\n';
 
-	// 	if(send(sock,response,strlen(response),0)<0)
-	// 		printf("send %s at %d error!\n",response,sock);
-	// 	//else
-	// 		//printf("send %s at %d already!\n",response,sock);
-	// }
-	printf("[DEBUG] close sock here\n");
+		if(send(sock,response,strlen(response),0)<0)
+			printf("send %s at %d error!\n",response,sock);
+		//else
+			//printf("send %s at %d already!\n",response,sock);
+	}
+	// printf("[DEBUG] close sock here\n");
 	close(sock);
 	return NULL;
 }
@@ -215,7 +209,7 @@ void* handle_https_request(void* ssladdr){
 			stat(path, &sbuf);
 			long size = 0;
 			if(end>0){
-				size = end - begin;
+				size = end - begin + 1;
 			}else{
 				size = sbuf.st_size - begin;
 			}
@@ -231,7 +225,7 @@ void* handle_https_request(void* ssladdr){
 			fseek(fp,begin,SEEK_SET);
 			char *srcp = (char *)malloc(size+100);
 			size = fread(srcp,1,size,fp);
-			printf("[DEBUG] send %ld of bytes\n",size);
+			// printf("[DEBUG] send %ld of bytes\n",size);
 			SSL_write(ssl,srcp,size);
 			free(srcp);
 			fclose(fp);
@@ -272,14 +266,14 @@ void* http_thread(){
     while (1) {
 		struct sockaddr_in caddr;
 		socklen_t len;
-		printf("[DEBUG] before accept\n");
+		// printf("[DEBUG] before accept\n");
 		int csock = accept(sock, (struct sockaddr*)&caddr, &len);//blocked when no request
 		if (csock < 0) {
-			printf("[DEBUG] no more accept!\n");
+			// printf("[DEBUG] no more accept!\n");
 			perror("Accept failed");
 			exit(1);
 		}else{
-			printf("[DEBUG] accept csock %d, sock %d\n", csock, sock);
+			// printf("[DEBUG] accept csock %d, sock %d\n", csock, sock);
 		}
 		//handle_http_request
 		int* http_sock=(int *)malloc(sizeof(int));
@@ -287,7 +281,7 @@ void* http_thread(){
 		pthread_t handle;
 		pthread_create(&handle,NULL,handle_http_request,(void *)http_sock);
 	}
-	printf("[DEBUG] close sock %d\n", sock);
+	// printf("[DEBUG] close sock %d\n", sock);
 	close(sock);
 
 	return NULL;

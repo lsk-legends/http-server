@@ -6,8 +6,8 @@ requests.packages.urllib3.disable_warnings()
 test_dir = dirname(realpath(__file__))
 
 # http 301
-#r = requests.get('http://10.0.0.1/index.html', allow_redirects=False)
-#assert(r.status_code == 301 and r.headers['Location'] == 'https://10.0.0.1/index.html')
+r = requests.get('http://10.0.0.1/index.html', allow_redirects=False)
+assert(r.status_code == 301 and r.headers['Location'] == 'https://10.0.0.1/index.html')
 
 # https 200 OK
 r = requests.get('https://10.0.0.1/index.html', verify=False)
